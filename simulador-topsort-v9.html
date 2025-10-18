@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Simulador de Ordenação Topológica</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+  .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+  h2 { color: #333; }
+  .controls { margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px; }
+  label { font-weight: bold; margin-right: 10px; }
+  input[type=number] { width: 80px; font-size: 16px; padding: 5px; margin-right: 15px; }
+  button { font-size: 16px; padding: 8px 15px; margin: 5px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px; }
+  button:hover { background: #45a049; }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  .step-button { background: #2196F3; }
+  .step-button:hover { background: #0b7dda; }
+  .reset-button { background: #f44336; }
+  .reset-button:hover { background: #da190b; }
+  #graph-canvas { border: 2px solid #ddd; margin: 20px 0; background: white; display: block; }
+  #queue-canvas { border: 2px solid #ddd; margin: 20px 0; background: white; display: block; }
+  #output { margin-top: 20px; white-space: pre-wrap; font-family: monospace; border: 1px solid #ddd; padding: 15px; background: #f9f9f9; max-height: 300px; overflow-y: auto; font-size: 14px; }
+  .state-display { margin: 15px 0; padding: 15px; background: #e3f2fd; border-left: 4px solid #2196F3; border-radius: 4px; }
+  .state-display h3 { margin-top: 0; color: #1976D2; }
+  .var-display { display: inline-block; margin: 5px 15px 5px 0; padding: 5px 10px; background: white; border-radius: 3px; font-family: monospace; }
+  .queue-display { background: #fff9c4; padding: 10px; border-radius: 4px; margin: 10px 0; }
+  .completed { background: #c8e6c9; }
+  .canvas-label { font-weight: bold; color: #555; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="container">
+<h2>Simulador de Ordenação Topológica (TopSort)</h2>
+
+<div class="controls">
+  <label for="numVertices">Número de vértices:</label>
+  <input type="number" id="numVertices" value="6" min="3" max="12" />
+  <button onclick="generateGraph()">Gerar Dígrafo Aleatório</button>
+  <button onclick="loadDefaultGraph()">Carregar Grafo Padrão</button>
+  <button class="step-button" id="stepBtn" onclick="stepSimulation()" disabled>Próximo Passo</button>
+  <button class="reset-button" onclick="resetSimulation()">Reiniciar</button>
+</div>
+
+<div class="canvas-label">Dígrafo:</div>
+<canvas id="graph-canvas" width="800" height="500"></canvas>
+
+<div class="canvas-label">Visualização da Fila:</div>
+<canvas id="queue-canvas" width="800" height="120"></canvas>
+
+<div class="state-display" id="stateDisplay" style="display:none;">
+  <h3>Estado Atual</h3>
+  <div id="variables"></div>
+  <div class="queue-display">
+    <strong>Fila (queue):</strong> <span id="queueContent">[]</span>
+  </div>
+</div>
+
+<div id="output"></div>
+</div>
+
+<script>
+let vertices = [];
+let edges = [];
+let indegree = {};
+let f = {};
+let queue = [];
+let counter = 0;
+let currentV = null;
+let steps = [];
+let stepIndex = 0;
+let simulationStarted = false;
+let canvas, ctx, queueCanvas, queueCtx;
+let vertexPositions = {}; // Mapeia IDs de vértices para suas posições
+
+function init() {
+  canvas = document.getElementById('graph-canvas');
+  ctx = canvas.getContext('2d');
+  queueCanvas = document.getElementById('queue-canvas');
+  queueCtx = queueCanvas.getContext('2d');
+  
+  // Carregar grafo padrão ao iniciar
+  loadDefaultGraph();
+}
+
+function loadDefaultGraph() {
+  // Usar IDs internos (A, B, C, D) para os vértices
+  vertices = ['A', 'B', 'C', 'D'];
+  
+  // Estrutura topológica fixa:
+  // A (top) não recebe arestas
+  // D (bottom) recebe de todos
+  // B e C (left, right) são intermediários
+  edges = [
+    ['A', 'B'],
+    ['A', 'C'],
+    ['A', 'D'],
+    ['B', 'C'],
+    ['B', 'D'],
+    ['C', 'D']
+  ];
+  
+  // Mapear posições dos vértices
+  vertexPositions = {
+    'A': 'top',
+    'B': 'left',
+    'C': 'right',
+    'D': 'bottom'
+  };
+  
+  drawGraph();
+  drawQueue();
+  resetSimulation();
+  document.getElementById('stepBtn').disabled = false;
+}
+
+function generateGraph() {
+  let n = parseInt(document.getElementById('numVertices').value);
+  if (n < 3 || n > 12) {
+    alert('Escolha entre 3 e 12 vértices');
+    return;
+  }
+  
+  vertices = [];
+  edges = [];
+  vertexPositions = {};
+  
+  // Criar vértices com IDs de letras
+  let letters = 'ABCDEFGHIJKL';
+  for (let i = 0; i < n; i++) {
+    vertices.push(letters[i]);
+  }
+  
+  // Gerar arestas aleatórias garantindo que seja um DAG
+  for (let i = 0; i < n; i++) {
+    let numEdges = Math.floor(Math.random() * 3);
+    for (let e = 0; e < numEdges; e++) {
+      let j = i + 1 + Math.floor(Math.random() * (n - i));
+      if (j < n && !edges.some(edge => edge[0] === vertices[i] && edge[1] === vertices[j])) {
+        edges.push([vertices[i], vertices[j]]);
+      }
+    }
+  }
+  
+  drawGraph();
+  drawQueue();
+  resetSimulation();
+  document.getElementById('stepBtn').disabled = false;
+}
+
+function drawGraph() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  let n = vertices.length;
+  let radius = 25;
+  let positions = {};
+  
+  let centerX = canvas.width / 2;
+  let centerY = canvas.height / 2;
+  
+  // Posicionamento especial para o grafo padrão (4 vértices)
+  if (n === 4 && vertexPositions['A'] !== undefined) {
+    let offset = 150;
+    positions['A'] = { x: centerX, y: centerY - offset };      // topo
+    positions['D'] = { x: centerX, y: centerY + offset };      // baixo
+    positions['B'] = { x: centerX - offset, y: centerY };      // esquerda
+    positions['C'] = { x: centerX + offset, y: centerY };      // direita
+  } else {
+    // Calcular posições em círculo para outros grafos
+    let circleRadius = Math.min(centerX, centerY) - 50;
+    
+    for (let i = 0; i < n; i++) {
+      let angle = (2 * Math.PI * i) / n - Math.PI / 2;
+      positions[vertices[i]] = {
+        x: centerX + circleRadius * Math.cos(angle),
+        y: centerY + circleRadius * Math.sin(angle)
+      };
+    }
+  }
+  
+  // Desenhar arestas
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 2;
+  for (let edge of edges) {
+    let [from, to] = edge;
+    let fromPos = positions[from];
+    let toPos = positions[to];
+    
+    ctx.beginPath();
+    ctx.moveTo(fromPos.x, fromPos.y);
+    ctx.lineTo(toPos.x, toPos.y);
+    ctx.stroke();
+    
+    // Desenhar seta
+    let angle = Math.atan2(toPos.y - fromPos.y, toPos.x - fromPos.x);
+    let arrowX = toPos.x - radius * Math.cos(angle);
+    let arrowY = toPos.y - radius * Math.sin(angle);
+    
+    ctx.beginPath();
+    ctx.moveTo(arrowX, arrowY);
+    ctx.lineTo(arrowX - 10 * Math.cos(angle - Math.PI / 6), 
+               arrowY - 10 * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(arrowX, arrowY);
+    ctx.lineTo(arrowX - 10 * Math.cos(angle + Math.PI / 6), 
+               arrowY - 10 * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  }
+  
+  // Desenhar vértices
+  for (let v of vertices) {
+    let pos = positions[v];
+    
+    // Cor do vértice baseada no estado
+    if (f[v] !== undefined) {
+      ctx.fillStyle = '#4CAF50';
+    } else if (currentV === v) {
+      ctx.fillStyle = '#FFC107';
+    } else if (queue.includes(v)) {
+      ctx.fillStyle = '#2196F3';
+    } else {
+      ctx.fillStyle = '#fff';
+    }
+    
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, radius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Mostrar f[v] se definido (número da ordenação topológica)
+    if (f[v] !== undefined) {
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 18px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(f[v], pos.x, pos.y);
+      
+      // Mostrar f[v] também abaixo
+      ctx.fillStyle = '#2E7D32';
+      ctx.font = '12px Arial';
+      ctx.fillText('f=' + f[v], pos.x, pos.y + 35);
+    }
+    
+    // Mostrar indegree
+    if (indegree[v] !== undefined) {
+      ctx.fillStyle = '#c62828';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('in=' + indegree[v], pos.x, pos.y - 35);
+    }
+  }
+}
+
+function drawQueue() {
+  queueCtx.clearRect(0, 0, queueCanvas.width, queueCanvas.height);
+  
+  // Título
+  queueCtx.fillStyle = '#333';
+  queueCtx.font = 'bold 16px Arial';
+  queueCtx.textAlign = 'left';
+  queueCtx.fillText('Fila (Queue):', 20, 25);
+  
+  if (queue.length === 0) {
+    queueCtx.fillStyle = '#999';
+    queueCtx.font = '14px Arial';
+    queueCtx.fillText('[ vazia ]', 150, 25);
+    return;
+  }
+  
+  // Desenhar elementos da fila
+  let boxWidth = 60;
+  let boxHeight = 50;
+  let startX = 150;
+  let startY = 40;
+  let spacing = 10;
+  
+  // Desenhar seta "FRONT"
+  queueCtx.fillStyle = '#666';
+  queueCtx.font = '12px Arial';
+  queueCtx.textAlign = 'center';
+  queueCtx.fillText('FRONT', startX + boxWidth / 2, startY - 10);
+  
+  for (let i = 0; i < queue.length; i++) {
+    let x = startX + i * (boxWidth + spacing);
+    
+    // Caixa
+    queueCtx.fillStyle = '#2196F3';
+    queueCtx.fillRect(x, startY, boxWidth, boxHeight);
+    
+    queueCtx.strokeStyle = '#1565C0';
+    queueCtx.lineWidth = 2;
+    queueCtx.strokeRect(x, startY, boxWidth, boxHeight);
+    
+    // Mostrar f[v] se disponível, senão mostrar ID do vértice
+    let displayValue = f[queue[i]] !== undefined ? f[queue[i]] : queue[i];
+    queueCtx.fillStyle = '#fff';
+    queueCtx.font = 'bold 24px Arial';
+    queueCtx.textAlign = 'center';
+    queueCtx.textBaseline = 'middle';
+    queueCtx.fillText(displayValue, x + boxWidth / 2, startY + boxHeight / 2);
+    
+    // Seta entre elementos
+    if (i < queue.length - 1) {
+      queueCtx.strokeStyle = '#666';
+      queueCtx.lineWidth = 2;
+      queueCtx.beginPath();
+      queueCtx.moveTo(x + boxWidth + 2, startY + boxHeight / 2);
+      queueCtx.lineTo(x + boxWidth + spacing - 2, startY + boxHeight / 2);
+      queueCtx.stroke();
+      
+      // Ponta da seta
+      queueCtx.beginPath();
+      queueCtx.moveTo(x + boxWidth + spacing - 2, startY + boxHeight / 2);
+      queueCtx.lineTo(x + boxWidth + spacing - 6, startY + boxHeight / 2 - 4);
+      queueCtx.moveTo(x + boxWidth + spacing - 2, startY + boxHeight / 2);
+      queueCtx.lineTo(x + boxWidth + spacing - 6, startY + boxHeight / 2 + 4);
+      queueCtx.stroke();
+    }
+  }
+  
+  // Desenhar seta "REAR"
+  let lastX = startX + (queue.length - 1) * (boxWidth + spacing);
+  queueCtx.fillStyle = '#666';
+  queueCtx.font = '12px Arial';
+  queueCtx.textAlign = 'center';
+  queueCtx.fillText('REAR', lastX + boxWidth / 2, startY + boxHeight + 15);
+}
+
+function resetSimulation() {
+  indegree = {};
+  f = {};
+  queue = [];
+  counter = 0;
+  currentV = null;
+  steps = [];
+  stepIndex = 0;
+  simulationStarted = false;
+  
+  document.getElementById('output').textContent = '';
+  document.getElementById('stateDisplay').style.display = 'none';
+  
+  if (vertices.length > 0) {
+    prepareSimulation();
+    drawQueue();
+  }
+}
+
+function prepareSimulation() {
+  steps = [];
+  let n = vertices.length;
+  
+  steps.push({ type: 'init', message: 'Iniciando TopSort()' });
+  steps.push({ type: 'counter', message: 'counter = 0' });
+  
+  for (let v of vertices) {
+    indegree[v] = 0;
+  }
+  
+  for (let edge of edges) {
+    indegree[edge[1]]++;
+  }
+  
+  steps.push({ type: 'indegree', message: 'Calculando indegree de todos os vértices' });
+  
+  for (let v of vertices) {
+    if (indegree[v] === 0) {
+      steps.push({ type: 'enqueue', v: v, message: `indegree[${v}] == 0, enfileirando vértice` });
+    }
+  }
+  
+  let tempQueue = vertices.filter(v => indegree[v] === 0);
+  let tempIndegree = {...indegree};
+  let tempCounter = 0;
+  let tempF = {};
+  
+  while (tempQueue.length > 0) {
+    let v = tempQueue.shift();
+    tempCounter++;
+    tempF[v] = tempCounter;
+    
+    steps.push({ type: 'dequeue', v: v, message: `v = vértice (dequeue)` });
+    steps.push({ type: 'assign_f', v: v, counter: tempCounter, message: `f[vértice] = ++counter = ${tempCounter}` });
+    
+    for (let edge of edges) {
+      if (edge[0] === v) {
+        let w = edge[1];
+        tempIndegree[w]--;
+        steps.push({ 
+          type: 'decrease', 
+          v: v, 
+          w: w, 
+          newIndegree: tempIndegree[w],
+          message: `Aresta: --indegree[w] = ${tempIndegree[w]}` 
+        });
+        
+        if (tempIndegree[w] === 0) {
+          tempQueue.push(w);
+          steps.push({ type: 'enqueue', v: w, message: `indegree[w] == 0, enfileirando vértice` });
+        }
+      }
+    }
+  }
+  
+  if (tempCounter !== n) {
+    steps.push({ type: 'cyclic', message: 'Grafo é cíclico!' });
+  } else {
+    steps.push({ type: 'complete', message: 'Ordenação topológica completa!' });
+  }
+}
+
+function stepSimulation() {
+  if (stepIndex >= steps.length) {
+    return;
+  }
+  
+  if (!simulationStarted) {
+    simulationStarted = true;
+    document.getElementById('stateDisplay').style.display = 'block';
+    
+    indegree = {};
+    f = {};
+    queue = [];
+    counter = 0;
+    currentV = null;
+    
+    for (let v of vertices) {
+      indegree[v] = 0;
+    }
+    for (let edge of edges) {
+      indegree[edge[1]]++;
+    }
+  }
+  
+  let step = steps[stepIndex];
+  let output = document.getElementById('output').textContent;
+  
+  switch(step.type) {
+    case 'init':
+    case 'counter':
+    case 'indegree':
+      output += step.message + '\n';
+      break;
+      
+    case 'enqueue':
+      queue.push(step.v);
+      output += step.message + '\n';
+      break;
+      
+    case 'dequeue':
+      currentV = queue.shift();
+      output += step.message + '\n';
+      break;
+      
+    case 'assign_f':
+      f[step.v] = step.counter;
+      counter = step.counter;
+      output += step.message + '\n';
+      currentV = null;
+      break;
+      
+    case 'decrease':
+      indegree[step.w] = step.newIndegree;
+      output += step.message + '\n';
+      break;
+      
+    case 'cyclic':
+    case 'complete':
+      output += '\n' + step.message + '\n';
+      document.getElementById('stepBtn').disabled = true;
+      break;
+  }
+  
+  document.getElementById('output').textContent = output;
+  document.getElementById('output').scrollTop = document.getElementById('output').scrollHeight;
+  
+  updateStateDisplay();
+  drawGraph();
+  drawQueue();
+  
+  stepIndex++;
+}
+
+function updateStateDisplay() {
+  let varsHtml = `
+    <div class="var-display"><strong>counter:</strong> ${counter}</div>
+    <div class="var-display"><strong>v:</strong> ${currentV !== null ? (f[currentV] !== undefined ? f[currentV] : currentV) : 'null'}</div>
+  `;
+  
+  document.getElementById('variables').innerHTML = varsHtml;
+  
+  // Mostrar fila com números de ordenação quando disponíveis
+  let queueDisplay = queue.map(v => f[v] !== undefined ? f[v] : v).join(', ');
+  document.getElementById('queueContent').textContent = '[' + queueDisplay + ']';
+}
+
+window.onload = init;
+</script>
+
+</body>
+</html>
